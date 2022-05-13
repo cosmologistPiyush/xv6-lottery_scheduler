@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "rand.h"
 
 struct {
   struct spinlock lock;
@@ -88,6 +89,9 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  
+  //for the lottery scheduler
+  p->tickets = 10;
 
   release(&ptable.lock);
 
@@ -198,6 +202,14 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
+
+  /*
+   * for lottery scheduler
+   * a fork created child inherits the number of tickets
+  */
+  if(curproc->tickets != 10)
+    np->tickets = curproc->tickets;
+
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -310,6 +322,22 @@ wait(void)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
 }
+int
+runnable_lotteries(void)
+{
+  struct proc *p;
+  int total_runnable_tickets = 0;
+
+  if (!holding(&ptable.lock))
+    panic("ptable lock");
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if(p->state == RUNNABLE) 
+      total_runnable_tickets += p->tickets;
+  }
+
+  return total_runnable_tickets;
+}
 
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
@@ -325,17 +353,38 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+
+  int count = 0, total_tickets = 0;
+  long golden_ticket = 0;
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+
+    // lottery tickets
+    total_tickets = runnable_lotteries();
+    if (total_tickets < 0)
+      panic("no running processes");
+
+    // picking a lottery winner
+    golden_ticket = random_at_most(total_tickets);
+    if (golden_ticket < 0 || golden_ticket > total_tickets)
+      panic("failed choosing a process");
+    
+    count = 0;
+
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
+      // choosing the won process to run
+      count += p->tickets;
+      if(count < golden_ticket)
+        continue;
+        
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
@@ -523,7 +572,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("%d %s %s %i", p->pid, state, p->name, p->tickets);
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)

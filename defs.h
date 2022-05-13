@@ -112,6 +112,7 @@ struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            pinit(void);
 void            procdump(void);
+int             runnable_lotteries(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            setproc(struct proc*);
@@ -120,6 +121,11 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+
+// rand.c
+void            sgenrand(unsigned long);
+long            genrand(void);
+long            random_at_most(long);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
